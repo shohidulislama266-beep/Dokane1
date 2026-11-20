@@ -1,0 +1,364 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- PATH & AUTH HELPERS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function storePath(storeId) {
+      return /databases/$(database)/documents/stores/$(storeId);
+    }
+
+    function memberPath(storeId, uid) {
+      return /databases/$(database)/documents/stores/$(storeId)/members/$(uid);
+    }
+
+    function invitePath(code) {
+      return /databases/$(database)/documents/invites/$(code);
+    }
+
+    // --- MEMBERSHIP & OWNERSHIP HELPERS ---
+    function isStoreOwner(storeId) {
+      return isSignedIn() &&
+        exists(storePath(storeId)) &&
+        get(storePath(storeId)).data.ownerId == request.auth.uid;
+    }
+
+    function isStoreOwnerAfter(storeId) {
+      return isSignedIn() &&
+        existsAfter(storePath(storeId)) &&
+        getAfter(storePath(storeId)).data.ownerId == request.auth.uid;
+    }
+
+    function isActiveMember(storeId, uid) {
+      return exists(memberPath(storeId, uid)) &&
+        get(memberPath(storeId, uid)).data.status is string &&
+        get(memberPath(storeId, uid)).data.status.lower() == 'active';
+    }
+
+    function isStoreMember(storeId) {
+      return isSignedIn() &&
+        exists(storePath(storeId)) &&
+        (
+          get(storePath(storeId)).data.ownerId == request.auth.uid ||
+          isActiveMember(storeId, request.auth.uid)
+        );
+    }
+
+    function isOperationalSubcollection(subcollection) {
+      return subcollection in [
+        'products', 'productBin', 'customers', 'suppliers',
+        'sales', 'purchases', 'purchaseReturns', 'payments',
+        'supplierPayments', 'accounts', 'accountAdjustments',
+        'expenses', 'otherIncomes', 'categories', 'notes',
+        'healthFixLogs', 'meta', 'strategy'
+      ];
+    }
+
+    // --- VALIDATION HELPERS ---
+    function isValidUserProfile(data) {
+      return data is map &&
+             data.size() <= 16 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 256)) &&
+             (!('storeId' in data) || (data.storeId is string && data.storeId.size() <= 128)) &&
+             (!('role' in data) || (data.role is string && data.role.size() <= 64)) &&
+             (!('isSimpleMode' in data) || data.isSimpleMode is bool) &&
+             (!('simpleMode' in data) || data.simpleMode is bool) &&
+             (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp);
+    }
+
+    function isValidStore(data) {
+      return data is map &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+             data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+             data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 100 &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() <= 64)) &&
+             (!('address' in data) || (data.address is string && data.address.size() <= 300)) &&
+             (!('shopType' in data) || (data.shopType is string && data.shopType.size() <= 64)) &&
+             (!('productCategories' in data) || (data.productCategories is list && data.productCategories.size() <= 100)) &&
+             (!('members' in data) || (data.members is list && data.members.size() <= 100));
+    }
+
+    function isValidStoreInvite(data) {
+      return data is map &&
+             data.code is string && data.code.size() >= 4 && data.code.size() <= 32 &&
+             data.storeId is string && isValidId(data.storeId) &&
+             data.status is string && data.status in ['active', 'pending', 'used', 'cancelled'] &&
+             data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 &&
+             data.roleLabel is string && data.roleLabel.size() >= 1 && data.roleLabel.size() <= 64 &&
+             data.roleLabel.lower() != 'owner' &&
+             data.permissionLevel is string && data.permissionLevel.size() >= 1 && data.permissionLevel.size() <= 64 &&
+             data.permissions is map &&
+             data.expiresAt is int &&
+             (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 160)) &&
+             (!('staffName' in data) || (data.staffName is string && data.staffName.size() <= 120)) &&
+             (!('createdByName' in data) || (data.createdByName is string && data.createdByName.size() <= 120)) &&
+             (!('createdAt' in data) || data.createdAt is int) &&
+             (!('usedByUid' in data) || (data.usedByUid is string && data.usedByUid.size() <= 128)) &&
+             (!('usedByEmail' in data) || (data.usedByEmail is string && data.usedByEmail.size() <= 256)) &&
+             (!('usedAt' in data) || data.usedAt is int);
+    }
+
+    function isUsableInvite(inv) {
+      return inv.status in ['active', 'pending'] &&
+             (!('usedByUid' in inv) || inv.usedByUid == '') &&
+             inv.expiresAt is int &&
+             inv.expiresAt > request.time.toMillis() &&
+             inv.roleLabel is string &&
+             inv.roleLabel.size() >= 1 &&
+             inv.roleLabel.lower() != 'owner' &&
+             inv.permissions is map;
+    }
+
+    function isValidStoreMember(data) {
+      return data is map &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.role is string && data.role.size() >= 1 && data.role.size() <= 64 &&
+             data.status is string && data.status.lower() in ['active', 'pending', 'removed'] &&
+             (!('roleLabel' in data) || (data.roleLabel is string && data.roleLabel.size() <= 64)) &&
+             (!('permissionLevel' in data) || (data.permissionLevel is string && data.permissionLevel.size() <= 64)) &&
+             (!('permissions' in data) || data.permissions is map) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 120)) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 256)) &&
+             (!('invitedBy' in data) || (data.invitedBy is string && data.invitedBy.size() <= 128)) &&
+             (!('inviteCode' in data) || (data.inviteCode is string && data.inviteCode.size() <= 32));
+    }
+
+    function matchesJoinInvite(storeId, memberData, invBefore, invAfter) {
+      return isUsableInvite(invBefore) &&
+             invBefore.storeId == storeId &&
+             invBefore.createdByUid != request.auth.uid &&
+             memberData.userId == request.auth.uid &&
+             memberData.status is string &&
+             memberData.status.lower() == 'active' &&
+             memberData.role is string &&
+             memberData.role.lower() != 'owner' &&
+             memberData.roleLabel is string &&
+             memberData.roleLabel.lower() != 'owner' &&
+             memberData.roleLabel == invBefore.roleLabel &&
+             memberData.role == invBefore.roleLabel.lower() &&
+             memberData.permissionLevel == invBefore.permissionLevel &&
+             memberData.permissions == invBefore.permissions &&
+             memberData.invitedBy == invBefore.createdByUid &&
+             invAfter.status == 'used' &&
+             invAfter.usedByUid == request.auth.uid;
+    }
+
+    function isValidJoinMemberForInvite(storeId, memberData) {
+      return ('inviteCode' in memberData) &&
+             memberData.inviteCode is string &&
+             isValidId(memberData.inviteCode) &&
+             exists(invitePath(memberData.inviteCode)) &&
+             existsAfter(invitePath(memberData.inviteCode)) &&
+             matchesJoinInvite(
+               storeId,
+               memberData,
+               get(invitePath(memberData.inviteCode)).data,
+               getAfter(invitePath(memberData.inviteCode)).data
+             );
+    }
+
+    function isValidPrivateAiKey(data, storeId) {
+      return data is map &&
+             data.storeId is string && data.storeId == storeId &&
+             data.apiKey is string && data.apiKey.size() >= 10 && data.apiKey.size() <= 256 &&
+             data.keyLast4 is string && data.keyLast4.size() == 4 &&
+             data.updatedBy is string && data.updatedBy == request.auth.uid;
+    }
+
+    function isValidStoreRecord(data) {
+      return data is map && data.size() <= 80;
+    }
+
+    // --- USERS COLLECTION ---
+    match /users/{userId} {
+      allow get, delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+      allow create, update: if isSignedIn() &&
+                               isValidId(userId) &&
+                               request.auth.uid == userId &&
+                               isValidUserProfile(incoming());
+    }
+
+    // --- INVITES COLLECTION ---
+    match /invites/{inviteCode} {
+      allow get: if isSignedIn() && isValidId(inviteCode);
+      allow list: if isSignedIn() && existing().createdByUid == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(inviteCode) &&
+                       isValidStoreInvite(incoming()) &&
+                       incoming().code == inviteCode &&
+                       incoming().createdByUid == request.auth.uid &&
+                       incoming().status in ['active', 'pending'] &&
+                       incoming().expiresAt > request.time.toMillis() &&
+                       (!('usedByUid' in incoming()) || incoming().usedByUid == '') &&
+                       (!('usedAt' in incoming()) || incoming().usedAt == 0) &&
+                       isStoreOwner(incoming().storeId);
+
+      allow update: if isSignedIn() &&
+                       isValidId(inviteCode) &&
+                       isValidStoreInvite(incoming()) &&
+                       (
+                         (
+                           isStoreOwner(existing().storeId) &&
+                           existing().status in ['active', 'pending'] &&
+                           incoming().status == 'cancelled' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                         ) ||
+                         (
+                           isUsableInvite(existing()) &&
+                           existing().createdByUid != request.auth.uid &&
+                           incoming().status == 'used' &&
+                           incoming().usedByUid == request.auth.uid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'usedByUid', 'usedByEmail', 'usedAt', 'updatedAt']) &&
+                           existsAfter(memberPath(existing().storeId, request.auth.uid)) &&
+                           getAfter(memberPath(existing().storeId, request.auth.uid)).data.inviteCode == inviteCode &&
+                           existsAfter(storePath(existing().storeId)) &&
+                           request.auth.uid in getAfter(storePath(existing().storeId)).data.memberUids
+                         )
+                       );
+
+      allow delete: if false;
+    }
+
+    // --- STORES COLLECTION ---
+    match /stores/{storeId} {
+      allow get: if isSignedIn() &&
+                    isValidId(storeId) &&
+                    (
+                      existing().ownerId == request.auth.uid ||
+                      isActiveMember(storeId, request.auth.uid)
+                    );
+
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(storeId) &&
+                       isValidStore(incoming()) &&
+                       incoming().ownerId == request.auth.uid &&
+                       incoming().memberUids == [request.auth.uid];
+
+      allow update: if isSignedIn() &&
+                       isValidId(storeId) &&
+                       isValidStore(incoming()) &&
+                       incoming().ownerId == existing().ownerId &&
+                       (
+                         (
+                           existing().ownerId == request.auth.uid &&
+                           existing().ownerId in incoming().memberUids
+                         ) ||
+                         (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt']) &&
+                           !(request.auth.uid in existing().memberUids) &&
+                           request.auth.uid in incoming().memberUids &&
+                           incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+                           incoming().memberUids.toSet() == existing().memberUids.toSet().union([request.auth.uid].toSet()) &&
+                           !exists(memberPath(storeId, request.auth.uid)) &&
+                           existsAfter(memberPath(storeId, request.auth.uid)) &&
+                           isValidJoinMemberForInvite(storeId, getAfter(memberPath(storeId, request.auth.uid)).data)
+                         )
+                       );
+
+      allow delete: if isSignedIn() && isValidId(storeId) && existing().ownerId == request.auth.uid;
+
+      // Owner-only private secrets (e.g. Gemini API key)
+      match /private/{docId} {
+        allow get, delete: if isSignedIn() && isValidId(docId) && isStoreOwner(storeId);
+        allow list: if false;
+        allow create, update: if isSignedIn() &&
+                                 isValidId(docId) &&
+                                 isValidPrivateAiKey(incoming(), storeId) &&
+                                 isStoreOwner(storeId);
+      }
+
+      // Store staff & owner members
+      match /members/{memberId} {
+        allow get: if isSignedIn() && isValidId(memberId) && isStoreMember(storeId);
+        allow list: if isSignedIn() && isStoreMember(storeId);
+
+        allow create: if isSignedIn() &&
+                         isValidId(memberId) &&
+                         isValidStoreMember(incoming()) &&
+                         incoming().userId == memberId &&
+                         (
+                           (
+                             isStoreOwnerAfter(storeId) &&
+                             (
+                               (memberId == request.auth.uid && incoming().role.lower() == 'owner' && incoming().status.lower() == 'active') ||
+                               (memberId != request.auth.uid && incoming().role.lower() != 'owner' && (!('roleLabel' in incoming()) || incoming().roleLabel.lower() != 'owner'))
+                             )
+                           ) ||
+                           (
+                             request.auth.uid == memberId &&
+                             exists(storePath(storeId)) &&
+                             isValidJoinMemberForInvite(storeId, incoming()) &&
+                             existsAfter(storePath(storeId)) &&
+                             request.auth.uid in getAfter(storePath(storeId)).data.memberUids
+                           )
+                         );
+
+        allow update: if isSignedIn() &&
+                         isValidId(memberId) &&
+                         isValidStoreMember(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isStoreOwner(storeId) &&
+                         memberId != request.auth.uid &&
+                         incoming().role.lower() != 'owner' &&
+                         (!('roleLabel' in incoming()) || incoming().roleLabel.lower() != 'owner');
+
+        allow delete: if isSignedIn() &&
+                         isValidId(memberId) &&
+                         isStoreOwner(storeId) &&
+                         memberId != request.auth.uid;
+      }
+
+      // Operational store subcollections (active-member scoped; meta/counters also allowed in setup batch)
+      match /{subcollection}/{docId} {
+        allow get, delete: if isSignedIn() &&
+                              isOperationalSubcollection(subcollection) &&
+                              isValidId(docId) &&
+                              isStoreMember(storeId);
+
+        allow list: if isSignedIn() &&
+                       isOperationalSubcollection(subcollection) &&
+                       isStoreMember(storeId);
+
+        allow create: if isSignedIn() &&
+                         isOperationalSubcollection(subcollection) &&
+                         isValidId(docId) &&
+                         isValidStoreRecord(incoming()) &&
+                         (
+                           isStoreMember(storeId) ||
+                           (subcollection == 'meta' && docId == 'counters' && isStoreOwnerAfter(storeId))
+                         );
+
+        allow update: if isSignedIn() &&
+                         isOperationalSubcollection(subcollection) &&
+                         isValidId(docId) &&
+                         isValidStoreRecord(incoming()) &&
+                         isStoreMember(storeId);
+      }
+    }
+  }
+}

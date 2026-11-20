@@ -1,0 +1,190 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile linking user UID to active storeId, role, and Simple Mode preference.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "storeId": { "type": "string" },
+        "role": { "type": "string" },
+        "isSimpleMode": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Store": {
+      "title": "Store",
+      "description": "Retail shop root document containing store profile, shop type, categories, ownerId, and memberUids.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "shopType": { "type": "string" },
+        "productCategories": { "type": "array" },
+        "ownerId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "members": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "ownerId", "memberUids"]
+    },
+    "StoreInvite": {
+      "title": "StoreInvite",
+      "description": "Single-use staff invitation code created by store owner.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "storeId": { "type": "string" },
+        "storeName": { "type": "string" },
+        "staffName": { "type": "string" },
+        "roleLabel": { "type": "string" },
+        "permissionLevel": { "type": "string" },
+        "status": { "type": "string" },
+        "createdByUid": { "type": "string" },
+        "expiresAt": { "type": "number" },
+        "usedByUid": { "type": "string" },
+        "usedByEmail": { "type": "string" },
+        "usedAt": { "type": "number" }
+      },
+      "required": ["code", "storeId", "status", "createdByUid"]
+    },
+    "StoreMember": {
+      "title": "StoreMember",
+      "description": "Store staff or owner membership record with role and granular permissions.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "roleLabel": { "type": "string" },
+        "permissionLevel": { "type": "string" },
+        "status": { "type": "string" },
+        "joinedTime": { "type": "number" },
+        "invitedBy": { "type": "string" },
+        "inviteCode": { "type": "string" }
+      },
+      "required": ["userId", "role", "status"]
+    },
+    "PrivateAiKey": {
+      "title": "PrivateAiKey",
+      "description": "Owner-only Gemini API key configuration stored under stores/{storeId}/private/aiKey.",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "apiKey": { "type": "string" },
+        "keyLast4": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storeId", "apiKey", "keyLast4", "updatedBy"]
+    },
+    "StoreRecord": {
+      "title": "StoreRecord",
+      "description": "Operational store subcollection document (products, sales, customers, suppliers, purchases, payments, accounts, expenses, incomes, categories, notes, counters, strategy).",
+      "type": "object",
+      "properties": {
+        "storeId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Per-user profile and store linkage."
+    },
+    "/stores/{storeId}": {
+      "schema": { "$ref": "#/entities/Store" },
+      "description": "Store root metadata and membership list."
+    },
+    "/invites/{inviteCode}": {
+      "schema": { "$ref": "#/entities/StoreInvite" },
+      "description": "Staff invite codes for joining a store."
+    },
+    "/stores/{storeId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/StoreMember" },
+      "description": "Store members and role permissions."
+    },
+    "/stores/{storeId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/PrivateAiKey" },
+      "description": "Owner-only private store secrets such as Gemini API key."
+    },
+    "/stores/{storeId}/products/{productId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Store inventory products."
+    },
+    "/stores/{storeId}/productBin/{productId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Soft-deleted products recycle bin."
+    },
+    "/stores/{storeId}/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Store customers and Baki credit balances."
+    },
+    "/stores/{storeId}/suppliers/{supplierId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Store suppliers and payable balances."
+    },
+    "/stores/{storeId}/sales/{saleId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "POS sales invoices."
+    },
+    "/stores/{storeId}/purchases/{purchaseId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Stock purchases from suppliers."
+    },
+    "/stores/{storeId}/purchaseReturns/{returnId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Purchase return records."
+    },
+    "/stores/{storeId}/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Customer Baki payment receipts."
+    },
+    "/stores/{storeId}/supplierPayments/{paymentId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Supplier payment disbursements."
+    },
+    "/stores/{storeId}/accounts/{accountId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Cash, bank, and mobile wallet accounts."
+    },
+    "/stores/{storeId}/accountAdjustments/{adjustmentId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Manual cash/bank balance adjustments."
+    },
+    "/stores/{storeId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Store operating expenses."
+    },
+    "/stores/{storeId}/otherIncomes/{incomeId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Non-sales store incomes."
+    },
+    "/stores/{storeId}/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Expense and income categories."
+    },
+    "/stores/{storeId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Store operational notes."
+    },
+    "/stores/{storeId}/healthFixLogs/{logId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Data health check fix logs."
+    },
+    "/stores/{storeId}/meta/{docId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Store metadata documents such as invoice counters."
+    },
+    "/stores/{storeId}/strategy/{docId}": {
+      "schema": { "$ref": "#/entities/StoreRecord" },
+      "description": "Daily AI business strategy snapshot."
+    }
+  }
+}
